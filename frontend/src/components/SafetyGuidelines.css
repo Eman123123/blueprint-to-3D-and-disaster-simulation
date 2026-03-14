@@ -1,0 +1,267 @@
+/* SafetyGuidelines.css */
+:root {
+    --primary: #354F52;
+    --secondary: #52796F;
+    --bg: #CAD2C5;
+    --text-dark: #2F3E46;
+    --text-light: #84A98C;
+    --card-bg: #FFFFFF;
+    --danger: #e74c3c;
+    --warning: #f39c12;
+    --success: #27ae60;
+    --info: #3498db;
+}
+
+.safety-guidelines-panel {
+  position: fixed;
+  right: 20px;
+  top: 20px;
+  width: 400px;
+  max-height: 85vh;
+  background: var(--card-bg);
+  border-radius: 12px;
+  box-shadow: 0 8px 30px rgba(53, 79, 82, 0.2);
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--text-light);
+  animation: slideIn 0.3s ease-out;
+}
+
+@keyframes slideIn {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.guidelines-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px;
+  background: linear-gradient(135deg, var(--primary), var(--secondary));
+  color: white;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+.disaster-icon-large {
+  font-size: 32px;
+}
+
+.header-text h3 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.subtitle {
+  margin: 5px 0 0 0;
+  font-size: 13px;
+  opacity: 0.8;
+}
+
+.close-btn {
+  background: rgba(255, 255, 255, 0.2);
+  border: none;
+  color: white;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  font-size: 18px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.close-btn:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.guidelines-content {
+  padding: 20px;
+  overflow-y: auto;
+  flex: 1;
+  color: var(--text-dark);
+}
+
+.emergency-alert {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  background: #fff3cd;
+  border: 1px solid #ffeaa7;
+  border-radius: 8px;
+  margin-bottom: 20px;
+}
+
+.alert-icon {
+  font-size: 24px;
+}
+
+.alert-text {
+  font-size: 14px;
+  color: #856404;
+}
+
+.guidelines-steps {
+  margin-bottom: 25px;
+}
+
+.guideline-step {
+  display: flex;
+  gap: 15px;
+  padding: 15px;
+  margin-bottom: 12px;
+  background: var(--bg);
+  border-radius: 8px;
+  border-left: 4px solid var(--info);
+  transition: transform 0.2s;
+}
+
+.guideline-step:hover {
+  transform: translateX(5px);
+  background: #e8f4fc;
+}
+
+.step-number {
+  width: 30px;
+  height: 30px;
+  background: var(--info);
+  color: white;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.step-content {
+  flex: 1;
+}
+
+.step-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 5px;
+}
+
+.step-icon {
+  font-size: 20px;
+}
+
+.step-title {
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--primary);
+}
+
+.step-detail {
+  font-size: 13px;
+  color: var(--text-dark);
+  line-height: 1.5;
+}
+
+.additional-info {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 15px;
+  margin-top: 25px;
+}
+
+.info-box {
+  padding: 15px;
+  border-radius: 8px;
+  border: 1px solid var(--text-light);
+}
+
+.info-box.warning {
+  background: #fff8e1;
+  border-color: var(--warning);
+}
+
+.info-box.warning h4 {
+  color: var(--warning);
+  margin-top: 0;
+}
+
+.info-box.emergency {
+  background: #e3f2fd;
+  border-color: var(--info);
+}
+
+.info-box.emergency h4 {
+  color: var(--info);
+  margin-top: 0;
+}
+
+.info-box ul {
+  margin: 10px 0 0 0;
+  padding-left: 20px;
+  font-size: 13px;
+  color: var(--text-dark);
+}
+
+.info-box li {
+  margin-bottom: 5px;
+}
+
+.contacts {
+  margin-top: 10px;
+}
+
+.contact-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  font-size: 13px;
+}
+
+.contact-icon {
+  font-size: 16px;
+}
+
+.contact-text {
+  color: var(--text-dark);
+}
+
+.guidelines-footer {
+  padding: 15px 20px;
+  background: var(--bg);
+  border-top: 1px solid var(--text-light);
+}
+
+.disclaimer {
+  font-size: 11px;
+  color: var(--text-dark);
+  margin: 0;
+  line-height: 1.4;
+  opacity: 0.8;
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+  .safety-guidelines-panel {
+    width: 95%;
+    right: 2.5%;
+    left: 2.5%;
+    max-height: 90vh;
+  }
+  
+  .additional-info {
+    grid-template-columns: 1fr;
+  }
+}

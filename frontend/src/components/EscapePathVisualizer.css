@@ -1,0 +1,138 @@
+/* src/components/EscapePathVisualizer.css */
+.escape-path-visualizer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 10; /* Lower z-index so it's behind UI but above 3D scene */
+}
+
+.escape-path-controls {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: white;
+  border-radius: 8px;
+  padding: 12px 20px;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);
+  border-left: 4px solid #00ff00;
+  min-width: 300px;
+  pointer-events: auto;
+  z-index: 20; /* Higher z-index so controls are clickable */
+  animation: slideUp 0.3s ease-out;
+}
+
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 20px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+.path-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.path-status.calculating {
+  color: #ff9800;
+}
+
+.path-status.success {
+  color: #4CAF50;
+}
+
+.path-status.error {
+  color: #f44336;
+}
+
+.spinner-small {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255, 152, 0, 0.3);
+  border-radius: 50%;
+  border-top-color: #ff9800;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.retry-btn, .clear-btn {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: none;
+  background: #f0f0f0;
+  color: #666;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  transition: all 0.2s;
+}
+
+.retry-btn:hover {
+  background: #ff9800;
+  color: white;
+  transform: rotate(180deg);
+}
+
+.clear-btn:hover {
+  background: #f44336;
+  color: white;
+}
+
+/* Mobile responsiveness */
+@media (max-width: 768px) {
+  .escape-path-controls {
+    width: 90%;
+    min-width: auto;
+    padding: 10px 15px;
+  }
+  
+  .path-status {
+    font-size: 12px;
+  }
+}
+/* Popup message styles */
+.path-not-found-popup {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background-color: #ff4444;
+  color: white;
+  padding: 20px 40px;
+  border-radius: 10px;
+  font-size: 18px;
+  font-weight: bold;
+  box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+  z-index: 1000;
+  animation: fadeInOut 3s ease-in-out;
+  text-align: center;
+  border: 2px solid white;
+  pointer-events: none;
+}
+
+@keyframes fadeInOut {
+  0% { opacity: 0; transform: translate(-50%, -60%); }
+  10% { opacity: 1; transform: translate(-50%, -50%); }
+  90% { opacity: 1; transform: translate(-50%, -50%); }
+  100% { opacity: 0; transform: translate(-50%, -40%); }
+}
