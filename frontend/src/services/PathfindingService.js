@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 
-// Min-Heap Priority Queue for A*/Dijkstra
+// Min-Heap Priority Queue for A* 
 class MinHeap {
   constructor() { this.heap = []; }
   push(node) { this.heap.push(node); this._up(this.heap.length - 1); }
@@ -212,6 +212,7 @@ export class PathfindingService {
       }
     });
   }
+  
   // =====================================================
   // TARGET REGISTRATION - Mark exits as walkable
   // =====================================================
@@ -285,7 +286,73 @@ export class PathfindingService {
   }
 
   // =====================================================
-  // MAIN ENTRY POINT - Find shortest path to any exterior opening
+  // HEURISTIC FUNCTION FOR A*
+  // =====================================================
+  heuristic(a, b) {
+    // Manhattan distance (good for grid-based movement)
+    // You can also use Euclidean: Math.sqrt((a.x-b.x)**2 + (a.z-b.z)**2)
+    return Math.abs(a.x - b.x) + Math.abs(a.z - b.z);
+  }
+
+  // =====================================================
+  // A* ALGORITHM for single target
+  // =====================================================
+  findPathAStar(start, goal) {
+    const openSet = new MinHeap();
+    const cameFrom = new Map();
+    const gScore = new Map(); // Cost from start
+    const fScore = new Map(); // g + heuristic
+    
+    const startKey = `${start.x},${start.z}`;
+    const goalKey = `${goal.x},${goal.z}`;
+    
+    gScore.set(startKey, 0);
+    fScore.set(startKey, this.heuristic(start, goal));
+    openSet.push({ x: start.x, z: start.z, f: fScore.get(startKey) });
+    
+    const visited = new Set();
+    
+    while (openSet.size > 0) {
+      const current = openSet.pop();
+      const currentKey = `${current.x},${current.z}`;
+      
+      // Goal reached
+      if (currentKey === goalKey) {
+        return this.reconstructPath(cameFrom, currentKey, startKey);
+      }
+      
+      if (visited.has(currentKey)) continue;
+      visited.add(currentKey);
+      
+      const currentG = gScore.get(currentKey);
+      
+      for (const neighbor of this.getValidNeighbors(current)) {
+        const neighborKey = `${neighbor.x},${neighbor.z}`;
+        
+        if (visited.has(neighborKey)) continue;
+        
+        // Calculate movement cost (including safety cost if available)
+        let moveCost = 1; // Base cost
+        if (this.grid[neighbor.x] && this.grid[neighbor.x][neighbor.z]) {
+          moveCost += this.grid[neighbor.x][neighbor.z].safetyCost || 0;
+        }
+        
+        const tentativeG = currentG + moveCost;
+        
+        if (!gScore.has(neighborKey) || tentativeG < gScore.get(neighborKey)) {
+          cameFrom.set(neighborKey, currentKey);
+          gScore.set(neighborKey, tentativeG);
+          fScore.set(neighborKey, tentativeG + this.heuristic(neighbor, goal));
+          openSet.push({ x: neighbor.x, z: neighbor.z, f: fScore.get(neighborKey) });
+        }
+      }
+    }
+    
+    return null; // No path found
+  }
+
+  // =====================================================
+  // MAIN ENTRY POINT - Find shortest path to ANY exterior opening using A*
   // =====================================================
   findEscapePath(currentPosition) {
     if (!this.grid) {
@@ -293,7 +360,6 @@ export class PathfindingService {
       return null;
     }
     
-    // Print number of exterior doors and windows
     console.log(`🔍 Pathfinding: Found ${this.exteriorDoors.length} exterior doors and ${this.exteriorWindows.length} exterior windows`);
     
     // Check if we have any escape routes
@@ -319,8 +385,8 @@ export class PathfindingService {
       start = nearestWalkable;
     }
 
-    // Find path using Dijkstra's algorithm
-    const path = this.findShortestPathToExterior(start);
+    // Find path using A* to the closest exit
+    const path = this.findClosestExitWithAStar(start);
     
     if (path && path.length > 0) {
       console.log(`✅ Path found to nearest exterior opening (path length: ${path.length} points)`);
@@ -332,83 +398,69 @@ export class PathfindingService {
   }
 
   // =====================================================
-  // Dijkstra's Algorithm for shortest path to ANY exterior opening
+  // Find closest exit using A* (run A* for each exit, pick shortest)
   // =====================================================
-  findShortestPathToExterior(start) {
-    const dist = new Map(); // Distance from start
-    const prev = new Map(); // Previous node in path
-    const heap = new MinHeap();
-    const visited = new Set();
-
-    // Initialize start node
-    const startKey = `${start.x},${start.z}`;
-    dist.set(startKey, 0);
-    heap.push({ x: start.x, z: start.z, f: 0 });
-
-    // Track ALL exterior openings found with their distances
-    const foundExits = []; // Use array to store multiple exits
-
-    while (heap.size > 0) {
-      const current = heap.pop();
-      const currentKey = `${current.x},${current.z}`;
+  findClosestExitWithAStar(start) {
+    let bestPath = null;
+    let bestLength = Infinity;
+    let bestExitKey = null;
+    let bestExitDist = Infinity;
+    
+    // Track all reachable exits
+    const reachableExits = [];
+    
+    // Helper function to process each exit
+    const processExit = (exitType, exitObject) => {
+      const exitGrid = this.worldToGrid(exitObject.position);
+      if (!exitGrid) return;
       
-      // Skip if already visited
-      if (visited.has(currentKey)) continue;
-      visited.add(currentKey);
+      // Only consider if this exit cell is walkable (should be, we marked it)
+      if (!this.isWalkable(exitGrid.x, exitGrid.z)) return;
       
-      const currentDist = dist.get(currentKey) || 0;
-
-      // Check if current cell is an exterior door or window using targetCells
-      if (this.targetCells.has(currentKey)) {
+      const path = this.findPathAStar(start, exitGrid);
+      
+      if (path) {
+        // Calculate path length (number of points)
+        const pathLength = path.length;
         
-        foundExits.push({
-          key: currentKey,
-          dist: currentDist,
-          x: current.x,
-          z: current.z
+        reachableExits.push({
+          type: exitType,
+          path: path,
+          length: pathLength,
+          exitGrid: exitGrid,
+          exitObject: exitObject
         });
         
-        // DON'T continue - let the algorithm explore all paths to find ALL exits
-      }
-
-      // Explore ALL neighbors - NO PRUNING
-      for (const neighbor of this.getValidNeighbors(current)) {
-        const neighborKey = `${neighbor.x},${neighbor.z}`;
-        
-        // Skip if already visited
-        if (visited.has(neighborKey)) continue;
-        
-        const newDist = currentDist + 1; // Uniform cost for all moves
-        
-        // Always update if we found a shorter path
-        if (!dist.has(neighborKey) || newDist < dist.get(neighborKey)) {
-          dist.set(neighborKey, newDist);
-          prev.set(neighborKey, currentKey);
-          heap.push({ x: neighbor.x, z: neighbor.z, f: newDist });
+        if (pathLength < bestLength) {
+          bestLength = pathLength;
+          bestPath = path;
+          bestExitKey = `${exitGrid.x},${exitGrid.z}`;
+          bestExitDist = pathLength;
         }
       }
-    }
-
-    // After exploring everything, find the shortest exit
-    if (foundExits.length > 0) 
-      {
-      // Sort exits by distance (shortest first)
-      foundExits.sort((a, b) => a.dist - b.dist);
+    };
+    
+    // Try all exterior doors
+    this.exteriorDoors.forEach(door => processExit('exterior_door', door));
+    
+    // Try all exterior windows
+    this.exteriorWindows.forEach(window => processExit('exterior_window', window));
+    
+    if (reachableExits.length > 0) {
+      console.log(`✅ Found ${reachableExits.length} reachable exterior openings:`);
+      reachableExits.sort((a, b) => a.length - b.length).forEach((exit, index) => {
+        console.log(`   ${index+1}. ${exit.type} at distance ${exit.length}`);
+      });
       
-      console.log(`✅ Found ${foundExits.length} reachable exterior openings:`);
-            
-      // Reconstruct path to the SHORTEST exit
-      const bestExit = foundExits[0];
-      console.log(`📏 Shortest path length: ${bestExit.dist} steps`);
-      
-      const path = this.reconstructPath(prev, startKey, bestExit.key);
       // Add exit info to path for visualization
-      path.exitType = this.getExitType(bestExit.x, bestExit.z);
-      path.exitDistance = bestExit.dist;
+      if (bestPath) {
+        bestPath.exitType = reachableExits[0].type;
+        bestPath.exitDistance = bestLength;
+      }
       
-      return path;
+      return bestPath;
     }
-
+    
     console.log('❌ No reachable exterior openings found');
     return null;
   }
@@ -488,16 +540,15 @@ export class PathfindingService {
     return neighbors;
   }
 
-  // Reconstruct path from start to exit
-  reconstructPath(prev, startKey, exitKey) {
+  // Reconstruct path from goal back to start
+  reconstructPath(cameFrom, currentKey, startKey) {
     const path = [];
-    let currentKey = exitKey;
     
-    // Build path from exit back to start
+    // Build path from goal back to start
     while (currentKey && currentKey !== startKey) {
       const [x, z] = currentKey.split(',').map(Number);
       path.unshift(this.gridToWorld(x, z));
-      currentKey = prev.get(currentKey);
+      currentKey = cameFrom.get(currentKey);
     }
     
     // Add start position
@@ -693,7 +744,7 @@ export class PathfindingService {
         cost: Infinity,
         safetyCost: 0,
         furnitureId: null,
-        exitType: null // Add exitType field
+        exitType: null
       }))
     );
   }
