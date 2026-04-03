@@ -16,3 +16,4 @@ __pycache__/
 public/node_modules/
 backend/weights/
 backend/cubicasa5k/
+backend/static/
