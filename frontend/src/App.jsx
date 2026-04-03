@@ -2526,7 +2526,6 @@ useEffect(() => {
                 onPathCalculated={handlePathCalculated}
                 pathColor={currentDisaster === 'earthquake' ? 0xffaa00 : 0x00ff00}
                 showArrows={true}
-                useAI={true}
                 showDebugWalls={false}
               />
             )}

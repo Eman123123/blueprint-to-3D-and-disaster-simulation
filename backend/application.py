@@ -36,7 +36,7 @@ def log_memory(stage=""):
     """Log current memory usage"""
     process = psutil.Process(os.getpid())
     mem = process.memory_info().rss / 1024 / 1024  # MB
-    print(f"📊 Memory {stage}: {mem:.2f} MB")
+    print(f" Memory {stage}: {mem:.2f} MB")
     return mem
 
 # Limit TensorFlow memory usage
@@ -72,7 +72,7 @@ cors = CORS(application, resources={r"/*": {"origins": "*"}})
 # Configuration for file uploads
 UPLOAD_FOLDER = 'static/uploads'
 MODEL_FOLDER = 'static/models'
-ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg'}
 
 application.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 application.config['MODEL_FOLDER'] = MODEL_FOLDER

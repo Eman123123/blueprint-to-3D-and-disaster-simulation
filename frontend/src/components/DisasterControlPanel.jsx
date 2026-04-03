@@ -13,7 +13,6 @@ const DisasterControlPanel = ({
   const [earthquakeParams, setEarthquakeParams] = useState({
     magnitude: 3,
     duration: 20,
-    intensity: 1.0
   });
 
   const [floodParams, setFloodParams] = useState({
@@ -119,30 +118,6 @@ const DisasterControlPanel = ({
               </button>
             </div>
           </div>
-
-          <div className="param-row">
-            <div className="param-label">
-              <span className="param-icon">⚡</span>
-              <span>Intensity:</span>
-            </div>
-            <div className="param-value-display">
-              <button 
-                className="param-btn minus"
-                onClick={() => handleEarthquakeParamChange('intensity', Math.max(0.1, earthquakeParams.intensity - 0.1))}
-                disabled={isSimulationActive}
-              >
-                -
-              </button>
-              <span className="value">{earthquakeParams.intensity.toFixed(1)}</span>
-              <button 
-                className="param-btn plus"
-                onClick={() => handleEarthquakeParamChange('intensity', Math.min(2.0, earthquakeParams.intensity + 0.1))}
-                disabled={isSimulationActive}
-              >
-                +
-              </button>
-            </div>
-          </div>
         </div>
       )}
 
@@ -208,7 +183,7 @@ const DisasterControlPanel = ({
               <span className="timer-text">Time Remaining: {formattedTime}</span>
             </div>
             <button className="stop-btn" onClick={onSimulationStop}>
-              🛑 STOP SIMULATION
+               STOP SIMULATION
             </button>
           </>
         ) : (
@@ -217,7 +192,7 @@ const DisasterControlPanel = ({
             onClick={handleStartSimulation}
             disabled={isSimulationActive}
           >
-            ▶️ START SIMULATION
+            START SIMULATION
           </button>
         )}
       </div>
