@@ -50,7 +50,7 @@ export class PathfindingService {
     this.exteriorWindows = [];
     this.interiorWindows = [];
     this.furniturePositions = new Map(); // true = furniture, 'adjacent' = adjacent cell
-    this.targetCells = new Set(); // Stores 'x,z' keys of valid exits
+    this.targetCells = new Set(); // Stores 'x,z' keys of valid exits (doors only)
   }
 
   initializeFromScene(scene, bounds) {
@@ -65,55 +65,130 @@ export class PathfindingService {
     
     // CRITICAL: Mark in correct order (later marks override previous)
     this.markFloorAsWalkable();      // First: floor is walkable
-    this.markWallsAsBarriers();      // Walls override floor (non-walkable)
-    this.markWindowsAsBarriers();    // Windows override floor (non-walkable)
-    this.markFurnitureAsSolid();     // Furniture overrides everything (non-walkable)
+    this.markWallsAsBarriers();      // Walls override floor (non-walkable, impassable)
+    this.markWindowsAsBarriers();    // Windows override floor (non-walkable, impassable)
+    this.markFurnitureAsSolid();     // Furniture overrides everything (non-walkable, impassable)
     
     this.buildFurnitureMap();        // Build quick lookup for furniture positions
     this.classifyExteriorOpenings(); // Classify doors/windows as exterior/interior
-    this.markExteriorOpeningsAsTargets(); // Mark exits as walkable targets
+    this.markExteriorDoorsAsTargets(); // Mark ONLY exterior doors as walkable targets
+    
+    // Log grid statistics for debugging
+    this.logGridStatistics();
     
     return this.grid;
   }
 
+  logGridStatistics() {
+    let walkableCount = 0;
+    let wallCount = 0;
+    let windowCount = 0;
+    let furnitureCount = 0;
+    let exitCount = 0;
+    let voidCount = 0;
+    
+    for (let x = 0; x < this.gridWidth; x++) {
+      for (let z = 0; z < this.gridDepth; z++) {
+        const cell = this.grid[x][z];
+        if (cell.walkable) {
+          walkableCount++;
+          if (cell.type === 'exit') exitCount++;
+        } else {
+          if (cell.type === 'wall') wallCount++;
+          else if (cell.type === 'window') windowCount++;
+          else if (cell.type === 'furniture') furnitureCount++;
+          else if (cell.type === 'void') voidCount++;
+        }
+      }
+    }
+    
+    console.log(`📊 Grid Statistics:`);
+    console.log(`   - Total cells: ${this.gridWidth * this.gridDepth}`);
+    console.log(`   - Walkable cells: ${walkableCount} (${exitCount} exits)`);
+    console.log(`   - Obstacles: Walls: ${wallCount}, Windows: ${windowCount}, Furniture: ${furnitureCount}, Void: ${voidCount}`);
+  }
+
+  // UPDATED: Recursive traversal to find furniture in nested groups
   collectAllObjects(scene) {
     this.walls = [];
     this.windows = [];
     this.doors = [];
     this.furniture = [];
     
-    scene.traverse(obj => {
-      if (!obj.isMesh) return;
+    // Helper function for recursive traversal
+    const traverseObject = (obj) => {
+      if (!obj) return;
       
       const ud = obj.userData || {};
       const name = (obj.name || '').toLowerCase();
       
-      if (ud.isWall || ud.type === 'wall' || name.includes('wall')) {
+      // Check for furniture FIRST (including groups)
+      if (ud.isFurniture === true || ud.furnitureType) {
+        this.furniture.push(obj);
+        console.log(`🪑 Found furniture: ${ud.furnitureType || 'unknown'} at position (${obj.position.x.toFixed(2)}, ${obj.position.z.toFixed(2)})`);
+      }
+      // Check for walls
+      else if (ud.isWall || ud.type === 'wall' || name.includes('wall')) {
         this.walls.push(obj);
       }
+      // Check for windows
       else if (ud.isWindow || ud.type === 'window' || name.includes('window')) {
         this.windows.push(obj);
       }
+      // Check for doors
       else if (ud.isDoor || ud.type === 'door' || name.includes('door')) {
         this.doors.push(obj);
       }
-      else if (ud.isFurniture || ud.type === 'furniture' || ud.furnitureType || 
-               name.includes('furniture') || name.includes('bed') || name.includes('sofa') || 
-               name.includes('chair') || name.includes('table') || name.includes('desk') ||
-               name.includes('cabinet') || name.includes('shelf')) {
+      // Check for furniture by name patterns
+      else if (ud.type === 'furniture' || 
+               name.includes('furniture') || 
+               name.includes('bed') || 
+               name.includes('sofa') || 
+               name.includes('chair') || 
+               name.includes('table') || 
+               name.includes('desk') ||
+               name.includes('cabinet') || 
+               name.includes('shelf')) {
         this.furniture.push(obj);
+        console.log(`🪑 Found furniture by name: ${obj.name} at position (${obj.position.x.toFixed(2)}, ${obj.position.z.toFixed(2)})`);
       }
-    });
+      
+      // Recursively traverse children (CRITICAL for furniture in groups)
+      if (obj.children && obj.children.length > 0) {
+        obj.children.forEach(child => traverseObject(child));
+      }
+    };
+    
+    // Start traversal from scene
+    traverseObject(scene);
+    
+    console.log(`📦 Collected objects: Walls: ${this.walls.length}, Windows: ${this.windows.length}, Doors: ${this.doors.length}, Furniture: ${this.furniture.length}`);
   }
 
   buildFurnitureMap() {
     this.furniturePositions.clear();
     
     this.furniture.forEach(item => {
-      const r = this.objectToGridRange(item, 0.25); // 0.25m padding
-      if (!r) return;
+      // Get world bounds for the furniture (handles groups properly)
+      let worldBounds;
+      try {
+        const box = new THREE.Box3().setFromObject(item);
+        if (box.isEmpty()) return;
+        worldBounds = box;
+      } catch (e) {
+        console.warn('Could not compute bounds for furniture:', e);
+        return;
+      }
       
-      // Mark furniture cells
+      // Convert world bounds to grid range
+      const r = {
+        sx: Math.max(0, Math.floor((worldBounds.min.x - this.bounds.minX) / this.gridSize)),
+        ex: Math.min(this.gridWidth - 1, Math.floor((worldBounds.max.x - this.bounds.minX) / this.gridSize)),
+        sz: Math.max(0, Math.floor((worldBounds.min.z - this.bounds.minZ) / this.gridSize)),
+        ez: Math.min(this.gridDepth - 1, Math.floor((worldBounds.max.z - this.bounds.minZ) / this.gridSize))
+      };
+      
+      // Mark furniture cells as impassable
       for (let x = r.sx; x <= r.ex; x++) {
         for (let z = r.sz; z <= r.ez; z++) {
           const key = `${x},${z}`;
@@ -121,7 +196,7 @@ export class PathfindingService {
         }
       }
       
-      // Mark adjacent cells (after marking all furniture cells)
+      // Mark adjacent cells (for avoidance - can walk but with caution)
       for (let x = r.sx; x <= r.ex; x++) {
         for (let z = r.sz; z <= r.ez; z++) {
           const adjacentCells = [
@@ -141,6 +216,8 @@ export class PathfindingService {
         }
       }
     });
+    
+    console.log(`🪑 Furniture map built: ${this.furniturePositions.size} cells marked (furniture + adjacent)`);
   }
 
   classifyExteriorOpenings() {
@@ -171,8 +248,8 @@ export class PathfindingService {
       const hasForwardHit = forwardHits.some(hit => hit.distance > threshold);
       const hasBackwardHit = backwardHits.some(hit => hit.distance > threshold);
       
-      // Exterior if only one side has obstacles (or none)
-      const isExterior = !hasForwardHit || !hasBackwardHit;
+      // Exterior if only one side has obstacles (the interior side)
+      const isExterior = (hasForwardHit && !hasBackwardHit) || (!hasForwardHit && hasBackwardHit);
       
       if (isExterior) {
         this.exteriorDoors.push(door);
@@ -183,7 +260,7 @@ export class PathfindingService {
       }
     });
 
-    // Classify windows (similar logic)
+    // Classify windows (for reference only - not used in pathfinding)
     this.windows.forEach(window => {
       const windowPos = window.position.clone();
       windowPos.y = 1.5;
@@ -201,7 +278,7 @@ export class PathfindingService {
       const hasForwardHit = forwardHits.some(hit => hit.distance > threshold);
       const hasBackwardHit = backwardHits.some(hit => hit.distance > threshold);
       
-      const isExterior = !hasForwardHit || !hasBackwardHit;
+      const isExterior = (hasForwardHit && !hasBackwardHit) || (!hasForwardHit && hasBackwardHit);
       
       if (isExterior) {
         this.exteriorWindows.push(window);
@@ -211,17 +288,20 @@ export class PathfindingService {
         window.userData.isExterior = false;
       }
     });
+    
+    console.log(`🚪 Exterior doors: ${this.exteriorDoors.length}, Interior doors: ${this.interiorDoors.length}`);
+    console.log(`🪟 Exterior windows: ${this.exteriorWindows.length} (excluded from escape paths, treated as barriers)`);
   }
   
   // =====================================================
-  // TARGET REGISTRATION - Mark exits as walkable
+  // TARGET REGISTRATION - Mark ONLY exterior doors as walkable
   // =====================================================
-  markExteriorOpeningsAsTargets() {
+  markExteriorDoorsAsTargets() {
     this.targetCells.clear();
     
-    const processOpening = (opening, type) => {
-      // Use small padding to ensure we catch the grid cell containing the opening
-      const r = this.objectToGridRange(opening, 0.1);
+    const processDoor = (door) => {
+      // Use small padding to ensure we catch the grid cell containing the door
+      const r = this.objectToGridRange(door, 0.1);
       if (!r) return;
 
       for (let x = r.sx; x <= r.ex; x++) {
@@ -230,8 +310,9 @@ export class PathfindingService {
             // Override previous marks (like walls/windows) to make it walkable
             this.grid[x][z].walkable = true;
             this.grid[x][z].type = 'exit';
-            this.grid[x][z].exitType = type; // Store whether it's door or window
+            this.grid[x][z].exitType = 'door';
             this.grid[x][z].cost = 1;
+            this.grid[x][z].isObstacle = false;
             
             // Add to fast-lookup set
             this.targetCells.add(`${x},${z}`);
@@ -240,14 +321,11 @@ export class PathfindingService {
       }
     };
 
-    // Mark exterior doors
-    this.exteriorDoors.forEach(door => processOpening(door, 'door'));
-    
-    // Mark exterior windows
-    this.exteriorWindows.forEach(window => processOpening(window, 'window'));
+    // Mark exterior doors ONLY (windows are NOT marked as exits)
+    this.exteriorDoors.forEach(door => processDoor(door));
 
-    console.log(`🎯 Marked ${this.targetCells.size} grid cells as exterior exits.`);
-    console.log(`   - Doors: ${this.exteriorDoors.length}, Windows: ${this.exteriorWindows.length}`);
+    console.log(`🎯 Marked ${this.targetCells.size} grid cells as exterior door exits.`);
+    console.log(`   - Doors: ${this.exteriorDoors.length} (windows excluded from escape paths)`);
   }
 
   _getObjectNormal(obj) {
@@ -275,14 +353,42 @@ export class PathfindingService {
     }
   }
 
+  // Check if cell contains furniture (impassable)
   hasFurniture(x, z) {
     const key = `${x},${z}`;
     return this.furniturePositions.get(key) === true;
   }
 
+  // Check if cell is adjacent to furniture (passable but with caution)
   isAdjacentToFurniture(x, z) {
     const key = `${x},${z}`;
     return this.furniturePositions.get(key) === 'adjacent';
+  }
+
+  // =====================================================
+  // STRICT OBSTACLE CHECK - Returns true if cell is an obstacle
+  // =====================================================
+  isObstacle(x, z) {
+    if (x < 0 || x >= this.gridWidth || z < 0 || z >= this.gridDepth) return true;
+    
+    const cell = this.grid[x][z];
+    
+    // Check if cell is marked as an obstacle type
+    if (cell.type === 'wall' || cell.type === 'window' || cell.type === 'furniture') {
+      return true;
+    }
+    
+    // Check if cell has furniture (redundant but safe)
+    if (this.hasFurniture(x, z)) {
+      return true;
+    }
+    
+    // Check if cell is not walkable
+    if (!cell.walkable) {
+      return true;
+    }
+    
+    return false;
   }
 
   // =====================================================
@@ -290,12 +396,11 @@ export class PathfindingService {
   // =====================================================
   heuristic(a, b) {
     // Manhattan distance (good for grid-based movement)
-    // You can also use Euclidean: Math.sqrt((a.x-b.x)**2 + (a.z-b.z)**2)
     return Math.abs(a.x - b.x) + Math.abs(a.z - b.z);
   }
 
   // =====================================================
-  // A* ALGORITHM for single target
+  // A* ALGORITHM for single target with strict obstacle avoidance
   // =====================================================
   findPathAStar(start, goal) {
     const openSet = new MinHeap();
@@ -306,18 +411,33 @@ export class PathfindingService {
     const startKey = `${start.x},${start.z}`;
     const goalKey = `${goal.x},${goal.z}`;
     
+    // Verify start and goal are not obstacles
+    if (this.isObstacle(start.x, start.z)) {
+      console.warn('Start position is an obstacle!');
+      return null;
+    }
+    
+    if (this.isObstacle(goal.x, goal.z)) {
+      console.warn('Goal position is an obstacle!');
+      return null;
+    }
+    
     gScore.set(startKey, 0);
     fScore.set(startKey, this.heuristic(start, goal));
     openSet.push({ x: start.x, z: start.z, f: fScore.get(startKey) });
     
     const visited = new Set();
+    let iterations = 0;
+    const maxIterations = this.gridWidth * this.gridDepth * 4; // Safety limit
     
-    while (openSet.size > 0) {
+    while (openSet.size > 0 && iterations < maxIterations) {
+      iterations++;
       const current = openSet.pop();
       const currentKey = `${current.x},${current.z}`;
       
       // Goal reached
       if (currentKey === goalKey) {
+        console.log(`✅ Path found in ${iterations} iterations`);
         return this.reconstructPath(cameFrom, currentKey, startKey);
       }
       
@@ -331,10 +451,16 @@ export class PathfindingService {
         
         if (visited.has(neighborKey)) continue;
         
-        // Calculate movement cost (including safety cost if available)
+        // Calculate movement cost (higher cost for cells adjacent to furniture)
         let moveCost = 1; // Base cost
+        
         if (this.grid[neighbor.x] && this.grid[neighbor.x][neighbor.z]) {
           moveCost += this.grid[neighbor.x][neighbor.z].safetyCost || 0;
+        }
+        
+        // Add penalty for cells adjacent to furniture (stay away from obstacles)
+        if (this.isAdjacentToFurniture(neighbor.x, neighbor.z)) {
+          moveCost += 0.5;
         }
         
         const tentativeG = currentG + moveCost;
@@ -348,11 +474,12 @@ export class PathfindingService {
       }
     }
     
+    console.warn(`No path found after ${iterations} iterations`);
     return null; // No path found
   }
 
   // =====================================================
-  // MAIN ENTRY POINT - Find shortest path to ANY exterior opening using A*
+  // MAIN ENTRY POINT - Find shortest path to ANY exterior DOOR
   // =====================================================
   findEscapePath(currentPosition) {
     if (!this.grid) {
@@ -360,11 +487,11 @@ export class PathfindingService {
       return null;
     }
     
-    console.log(`🔍 Pathfinding: Found ${this.exteriorDoors.length} exterior doors and ${this.exteriorWindows.length} exterior windows`);
+    console.log(`🔍 Pathfinding: Found ${this.exteriorDoors.length} exterior doors (windows excluded from escape path)`);
     
     // Check if we have any escape routes
-    if (this.exteriorDoors.length === 0 && this.exteriorWindows.length === 0) {
-      console.warn('No exterior doors or windows found');
+    if (this.exteriorDoors.length === 0) {
+      console.warn('No exterior doors found for escape');
       return null;
     }
 
@@ -375,97 +502,104 @@ export class PathfindingService {
       return null;
     }
     
+    console.log(`📍 Start position at grid (${start.x}, ${start.z})`);
+    
     // Adjust start position if it's in an obstacle
-    if (!this.isWalkable(start.x, start.z)) {
+    if (this.isObstacle(start.x, start.z)) {
+      console.log('Start position is in obstacle, finding nearest walkable cell...');
       const nearestWalkable = this.findNearestWalkable(start.x, start.z);
       if (!nearestWalkable) {
         console.warn('No walkable start position found');
         return null;
       }
       start = nearestWalkable;
+      console.log(`   Moved to (${start.x}, ${start.z})`);
     }
 
-    // Find path using A* to the closest exit
+    // Find path using A* to the closest exterior door
     const path = this.findClosestExitWithAStar(start);
     
     if (path && path.length > 0) {
-      console.log(`✅ Path found to nearest exterior opening (path length: ${path.length} points)`);
-      return this.smoothPath(path);
+      console.log(`✅ Path found to nearest exterior door (path length: ${path.length} points)`);
+      const smoothedPath = this.smoothPath(path);
+      console.log(`   Smoothed path length: ${smoothedPath.length} points`);
+      return smoothedPath;
     }
 
-    console.warn('No path found to any exterior door or window');
+    console.warn('No path found to any exterior door');
     return null;
   }
 
   // =====================================================
-  // Find closest exit using A* (run A* for each exit, pick shortest)
+  // Find closest exterior door using A* (run A* for each door, pick shortest)
   // =====================================================
   findClosestExitWithAStar(start) {
     let bestPath = null;
     let bestLength = Infinity;
-    let bestExitKey = null;
-    let bestExitDist = Infinity;
     
-    // Track all reachable exits
-    const reachableExits = [];
+    // Track all reachable doors
+    const reachableDoors = [];
     
-    // Helper function to process each exit
-    const processExit = (exitType, exitObject) => {
-      const exitGrid = this.worldToGrid(exitObject.position);
-      if (!exitGrid) return;
+    // Helper function to process each exterior door
+    const processDoor = (door) => {
+      const doorGrid = this.worldToGrid(door.position);
+      if (!doorGrid) return;
       
-      // Only consider if this exit cell is walkable (should be, we marked it)
-      if (!this.isWalkable(exitGrid.x, exitGrid.z)) return;
+      // Verify door cell is not an obstacle
+      if (this.isObstacle(doorGrid.x, doorGrid.z)) {
+        console.log(`Door at (${doorGrid.x}, ${doorGrid.z}) is blocked by obstacle`);
+        return;
+      }
       
-      const path = this.findPathAStar(start, exitGrid);
+      console.log(`  Trying door at (${doorGrid.x}, ${doorGrid.z})...`);
+      const path = this.findPathAStar(start, doorGrid);
       
       if (path) {
-        // Calculate path length (number of points)
         const pathLength = path.length;
-        
-        reachableExits.push({
-          type: exitType,
+        reachableDoors.push({
+          type: 'exterior_door',
           path: path,
           length: pathLength,
-          exitGrid: exitGrid,
-          exitObject: exitObject
+          doorGrid: doorGrid,
+          doorObject: door
         });
         
         if (pathLength < bestLength) {
           bestLength = pathLength;
           bestPath = path;
-          bestExitKey = `${exitGrid.x},${exitGrid.z}`;
-          bestExitDist = pathLength;
         }
+      } else {
+        console.log(`  No path to door at (${doorGrid.x}, ${doorGrid.z})`);
       }
     };
     
-    // Try all exterior doors
-    this.exteriorDoors.forEach(door => processExit('exterior_door', door));
+    // Process all exterior doors ONLY (exclude windows)
+    console.log(`🎯 Checking ${this.exteriorDoors.length} exterior doors...`);
+    this.exteriorDoors.forEach((door, index) => {
+      console.log(`Door ${index + 1}/${this.exteriorDoors.length}:`);
+      processDoor(door);
+    });
     
-    // Try all exterior windows
-    this.exteriorWindows.forEach(window => processExit('exterior_window', window));
-    
-    if (reachableExits.length > 0) {
-      console.log(`✅ Found ${reachableExits.length} reachable exterior openings:`);
-      reachableExits.sort((a, b) => a.length - b.length).forEach((exit, index) => {
-        console.log(`   ${index+1}. ${exit.type} at distance ${exit.length}`);
+    if (reachableDoors.length > 0) {
+      console.log(`✅ Found ${reachableDoors.length} reachable exterior doors:`);
+      reachableDoors.sort((a, b) => a.length - b.length).forEach((door, index) => {
+        console.log(`   ${index+1}. Door at distance ${door.length} steps`);
       });
       
       // Add exit info to path for visualization
       if (bestPath) {
-        bestPath.exitType = reachableExits[0].type;
+        bestPath.exitType = 'exterior_door';
         bestPath.exitDistance = bestLength;
       }
       
       return bestPath;
     }
     
-    console.log('❌ No reachable exterior openings found');
+    console.log('❌ No reachable exterior doors found');
     return null;
   }
 
-  // Helper method to get exit type
+  // Helper method to get exit type (doors only)
   getExitType(x, z) {
     // Check exterior doors
     for (const door of this.exteriorDoors) {
@@ -474,25 +608,22 @@ export class PathfindingService {
         return 'exterior_door';
       }
     }
-    
-    // Check exterior windows
-    for (const window of this.exteriorWindows) {
-      const windowCell = this.worldToGrid(window.position);
-      if (windowCell && windowCell.x === x && windowCell.z === z) {
-        return 'exterior_window';
-      }
-    }
-    
     return 'exit';
   }
 
-  // Check if a grid cell contains an exterior door or window
+  // Check if a grid cell contains an exterior door (not window)
   isExteriorOpening(x, z) {
-    // Simple O(1) lookup using targetCells
-    return this.targetCells.has(`${x},${z}`);
+    // Check only doors, not windows
+    for (const door of this.exteriorDoors) {
+      const doorCell = this.worldToGrid(door.position);
+      if (doorCell && doorCell.x === x && doorCell.z === z) {
+        return true;
+      }
+    }
+    return false;
   }
 
-  // Get valid neighbors with strict obstacle avoidance
+  // Get valid neighbors with strict obstacle avoidance - NEVER return obstacle cells
   getValidNeighbors(node) {
     const neighbors = [];
     const dirs = [
@@ -514,23 +645,25 @@ export class PathfindingService {
         continue;
       }
       
-      // STRICT AVOIDANCE: Check walkability and furniture
-      if (!this.isWalkable(nx, nz)) continue;
-      if (this.hasFurniture(nx, nz)) continue;
-      if (this.isAdjacentToFurniture(nx, nz)) continue;
+      // STRICT AVOIDANCE: Skip if cell is an obstacle
+      if (this.isObstacle(nx, nz)) {
+        continue;
+      }
+      
+      // Skip if cell has furniture (already covered by isObstacle, but double-check)
+      if (this.hasFurniture(nx, nz)) {
+        continue;
+      }
       
       // For diagonal moves, ensure we're not cutting corners through obstacles
       if (Math.abs(dx) === 1 && Math.abs(dz) === 1) {
         // Check both cardinal neighbors to prevent corner cutting
-        const neighbor1Walkable = this.isWalkable(node.x + dx, node.z) && 
-                                  !this.hasFurniture(node.x + dx, node.z) &&
-                                  !this.isAdjacentToFurniture(node.x + dx, node.z);
-        const neighbor2Walkable = this.isWalkable(node.x, node.z + dz) &&
-                                  !this.hasFurniture(node.x, node.z + dz) &&
-                                  !this.isAdjacentToFurniture(node.x, node.z + dz);
+        const neighbor1IsObstacle = this.isObstacle(node.x + dx, node.z);
+        const neighbor2IsObstacle = this.isObstacle(node.x, node.z + dz);
         
-        if (!neighbor1Walkable || !neighbor2Walkable) {
-          continue; // Skip diagonal if either cardinal neighbor is blocked
+        // If either cardinal neighbor is an obstacle, skip diagonal
+        if (neighbor1IsObstacle || neighbor2IsObstacle) {
+          continue;
         }
       }
       
@@ -559,7 +692,7 @@ export class PathfindingService {
   }
 
   // =====================================================
-  // GRID MARKING METHODS
+  // GRID MARKING METHODS - All obstacles marked as NOT walkable
   // =====================================================
   
   markFloorAsWalkable() {
@@ -572,10 +705,12 @@ export class PathfindingService {
             this.grid[x][z].walkable = true;
             this.grid[x][z].type = 'floor';
             this.grid[x][z].cost = 1;
+            this.grid[x][z].isObstacle = false;
           }
         }
       }
     });
+    console.log(`✅ Marked floor as walkable`);
   }
 
   markWallsAsBarriers() {
@@ -588,10 +723,12 @@ export class PathfindingService {
             this.grid[x][z].walkable = false;
             this.grid[x][z].type = 'wall';
             this.grid[x][z].cost = Infinity;
+            this.grid[x][z].isObstacle = true;
           }
         }
       }
     });
+    console.log(`🧱 Marked ${this.walls.length} walls as impassable barriers`);
   }
 
   markWindowsAsBarriers() {
@@ -604,16 +741,35 @@ export class PathfindingService {
             this.grid[x][z].walkable = false;
             this.grid[x][z].type = 'window';
             this.grid[x][z].cost = Infinity;
+            this.grid[x][z].isObstacle = true;
           }
         }
       }
     });
+    console.log(`🪟 Marked ${this.windows.length} windows as impassable barriers`);
   }
 
+  // UPDATED: Use world bounds for furniture to handle groups properly
   markFurnitureAsSolid() {
     this.furniture.forEach(item => {
-      const r = this.objectToGridRange(item, 0.25);
-      if (!r) return;
+      // Get world bounds for the furniture (handles groups properly)
+      let worldBounds;
+      try {
+        const box = new THREE.Box3().setFromObject(item);
+        if (box.isEmpty()) return;
+        worldBounds = box;
+      } catch (e) {
+        console.warn('Could not compute bounds for furniture:', e);
+        return;
+      }
+      
+      // Convert world bounds to grid range
+      const r = {
+        sx: Math.max(0, Math.floor((worldBounds.min.x - this.bounds.minX) / this.gridSize)),
+        ex: Math.min(this.gridWidth - 1, Math.floor((worldBounds.max.x - this.bounds.minX) / this.gridSize)),
+        sz: Math.max(0, Math.floor((worldBounds.min.z - this.bounds.minZ) / this.gridSize)),
+        ez: Math.min(this.gridDepth - 1, Math.floor((worldBounds.max.z - this.bounds.minZ) / this.gridSize))
+      };
       
       for (let x = r.sx; x <= r.ex; x++) {
         for (let z = r.sz; z <= r.ez; z++) {
@@ -621,11 +777,14 @@ export class PathfindingService {
             // Force mark as non-walkable
             this.grid[x][z].walkable = false;
             this.grid[x][z].type = 'furniture';
+            this.grid[x][z].cost = Infinity;
+            this.grid[x][z].isObstacle = true;
             this.grid[x][z].furnitureId = item.uuid;
           }
         }
       }
     });
+    console.log(`🪑 Marked ${this.furniture.length} furniture items as impassable obstacles`);
   }
 
   // =====================================================
@@ -635,13 +794,15 @@ export class PathfindingService {
   isWalkable(x, z) {
     if (x < 0 || x >= this.gridWidth || z < 0 || z >= this.gridDepth) return false;
     const cell = this.grid[x][z];
-    // Walkable if marked as walkable AND it's floor, door, or exit
-    return cell.walkable === true && ['floor', 'door', 'exit'].includes(cell.type);
+    // Walkable if marked as walkable AND not an obstacle AND is floor, door, or exit
+    return cell.walkable === true && 
+           cell.isObstacle !== true && 
+           ['floor', 'door', 'exit'].includes(cell.type);
   }
 
   findNearestWalkable(x, z, maxRadius = 25) {
     // Check if current is walkable
-    if (this.isWalkable(x, z) && !this.hasFurniture(x, z) && !this.isAdjacentToFurniture(x, z)) {
+    if (this.isWalkable(x, z) && !this.hasFurniture(x, z)) {
       return {x, z};
     }
     
@@ -656,7 +817,7 @@ export class PathfindingService {
           const nz = z + dz;
           
           if (nx >= 0 && nx < this.gridWidth && nz >= 0 && nz < this.gridDepth) {
-            if (this.isWalkable(nx, nz) && !this.hasFurniture(nx, nz) && !this.isAdjacentToFurniture(nx, nz)) {
+            if (this.isWalkable(nx, nz) && !this.hasFurniture(nx, nz)) {
               return {x: nx, z: nz};
             }
           }
@@ -744,13 +905,14 @@ export class PathfindingService {
         cost: Infinity,
         safetyCost: 0,
         furnitureId: null,
-        exitType: null
+        exitType: null,
+        isObstacle: true // Default to obstacle
       }))
     );
   }
 
   // =====================================================
-  // PATH SMOOTHING
+  // PATH SMOOTHING with obstacle checking
   // =====================================================
   hasLineOfSight(a, b) {
     const ga = this.worldToGrid(a);
@@ -766,10 +928,9 @@ export class PathfindingService {
     let err = dx - dz;
 
     while (true) {
-      // Check if current cell is valid
-      if (!this.isWalkable(x0, z0)) return false;
-      if (this.hasFurniture(x0, z0) || this.isAdjacentToFurniture(x0, z0)) return false;
-
+      // Check if current cell is an obstacle
+      if (this.isObstacle(x0, z0)) return false;
+      
       if (x0 === x1 && z0 === z1) return true;
       
       const e2 = 2 * err;
@@ -800,22 +961,33 @@ export class PathfindingService {
 
   collectFloorObjects(scene) {
     this.floorObjects = [];
-    scene.traverse(obj => {
+    
+    // Helper function for recursive traversal to find floors
+    const traverseForFloors = (obj) => {
+      if (!obj) return;
+      
       const ud = obj.userData || {};
       if (ud.type === 'floor' || ud.isFloor || /floor|ground|terrain/i.test(obj.name || '')) {
         this.floorObjects.push(obj);
       }
-    });
+      
+      if (obj.children && obj.children.length > 0) {
+        obj.children.forEach(child => traverseForFloors(child));
+      }
+    };
+    
+    traverseForFloors(scene);
+    console.log(`🌍 Found ${this.floorObjects.length} floor objects`);
   }
 
-  // Helper to get nearest escape point (for debugging)
+  // Helper to get nearest escape point (for debugging) - doors only
   getNearestEscapePoint(position) {
     if (!position) return null;
     
     let nearest = null;
     let nearestDist = Infinity;
     
-    // Check exterior doors
+    // Check exterior doors ONLY
     this.exteriorDoors.forEach(door => {
       const dist = position.distanceTo(door.position);
       if (dist < nearestDist) {
@@ -824,15 +996,39 @@ export class PathfindingService {
       }
     });
     
-    // Check exterior windows
-    this.exteriorWindows.forEach(window => {
-      const dist = position.distanceTo(window.position);
-      if (dist < nearestDist) {
-        nearestDist = dist;
-        nearest = { type: 'window', object: window, position: window.position.clone() };
+    return nearest;
+  }
+  
+  // Debug method to visualize obstacles (call this for testing)
+  getObstacleMap() {
+    const obstacleMap = [];
+    for (let x = 0; x < this.gridWidth; x++) {
+      obstacleMap[x] = [];
+      for (let z = 0; z < this.gridDepth; z++) {
+        obstacleMap[x][z] = {
+          isObstacle: this.isObstacle(x, z),
+          type: this.grid[x][z].type,
+          walkable: this.grid[x][z].walkable
+        };
       }
+    }
+    return obstacleMap;
+  }
+  
+  // Debug method to list all detected furniture
+  debugFurnitureDetection() {
+    console.log('=== FURNITURE DETECTION DEBUG ===');
+    console.log(`Total furniture objects in service: ${this.furniture.length}`);
+    
+    this.furniture.forEach((furniture, index) => {
+      console.log(`Furniture ${index + 1}:`);
+      console.log(`  - Type: ${furniture.userData.furnitureType || 'unknown'}`);
+      console.log(`  - Position: (${furniture.position.x.toFixed(2)}, ${furniture.position.z.toFixed(2)})`);
+      console.log(`  - UUID: ${furniture.uuid}`);
     });
     
-    return nearest;
+    console.log(`Furniture positions map size: ${this.furniturePositions.size}`);
+    console.log(`Target cells (exits): ${this.targetCells.size}`);
+    console.log('================================');
   }
 }

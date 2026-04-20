@@ -1,4 +1,3 @@
-// src/components/EscapePathVisualizer.jsx
 import React, { useEffect, useRef, useState, useCallback, forwardRef, useImperativeHandle } from 'react';
 import * as THREE from 'three';
 import './EscapePathVisualizer.css';
@@ -20,7 +19,6 @@ const EscapePathVisualizer = forwardRef(({
   const [isCalculating, setIsCalculating] = useState(false);
   const [error, setError] = useState(null);
   const [showNoPathPopup, setShowNoPathPopup] = useState(false);
-  const [furnitureVersion, setFurnitureVersion] = useState(0);
   
   // Selection mode states
   const [selectionMode, setSelectionMode] = useState(false);
@@ -176,12 +174,43 @@ const EscapePathVisualizer = forwardRef(({
   // Check if in selection mode
   const isSelectionMode = useCallback(() => selectionMode, [selectionMode]);
 
+  // REFRESH PATHFINDING - Auto detect furniture changes
+  const refreshPathfinding = useCallback(() => {
+    if (!scene || !isActive) return;
+    
+    console.log('🔄 Auto-refreshing pathfinding service...');
+    
+    if (pathfindingServiceRef.current) {
+      pathfindingServiceRef.current.initializeFromScene(scene);
+      
+      // Log furniture detection for debugging
+      let furnitureCount = 0;
+      const findFurniture = (obj) => {
+        if (obj.userData && (obj.userData.isFurniture === true || obj.userData.furnitureType)) {
+          furnitureCount++;
+          console.log(`   Furniture detected: ${obj.userData.furnitureType || 'unknown'} at position (${obj.position.x.toFixed(2)}, ${obj.position.z.toFixed(2)})`);
+        }
+        if (obj.children) {
+          obj.children.forEach(child => findFurniture(child));
+        }
+      };
+      findFurniture(scene);
+      console.log(`📦 Total furniture objects detected: ${furnitureCount}`);
+      
+      // Recalculate path if we have a start point
+      if (selectedStartPoint) {
+        calculateEscapePath(selectedStartPoint);
+      }
+    }
+  }, [scene, isActive, selectedStartPoint]);
+
   // Expose methods via ref
   useImperativeHandle(ref, () => ({
     enableStartPointSelection,
     getSelectedStartPoint,
     clearStartPoint,
-    isSelectionMode
+    isSelectionMode,
+    refreshPathfinding
   }));
 
   // Add click event listener for selection mode
@@ -232,17 +261,24 @@ const EscapePathVisualizer = forwardRef(({
     try {
       pathfindingServiceRef.current = new PathfindingService(0.3);
       pathfindingServiceRef.current.initializeFromScene(scene);
+      
+      // Count initial furniture
       let furnitureCount = 0;
-      scene.traverse((object) => {
-        if (object.userData.isFurniture || object.userData.furnitureType) {
+      const countFurniture = (obj) => {
+        if (obj.userData && (obj.userData.isFurniture === true || obj.userData.furnitureType)) {
           furnitureCount++;
         }
-      });
+        if (obj.children) {
+          obj.children.forEach(child => countFurniture(child));
+        }
+      };
+      countFurniture(scene);
       lastFurnitureCountRef.current = furnitureCount;
+      
       initializedRef.current = true;
       console.log('✅ Pathfinding service initialized');
       console.log(`🚪 Found ${pathfindingServiceRef.current.exteriorDoors?.length || 0} exterior doors`);
-      console.log(`🪟 Found ${pathfindingServiceRef.current.exteriorWindows?.length || 0} exterior windows`);
+      console.log(`📦 Initial furniture count: ${furnitureCount}`);
     } catch (err) {
       setError("Failed to initialize pathfinding: " + err.message);
     }
@@ -251,17 +287,24 @@ const EscapePathVisualizer = forwardRef(({
     };
   }, [scene, clearPathVisualization]);
 
-  // Function to check for furniture changes
+  // AUTO-DETECT FURNITURE CHANGES - Poll every 500ms
   const checkFurnitureChanges = useCallback(() => {
     if (!scene || !pathfindingServiceRef.current || !isActive) return false;
-    let furnitureCount = 0;
-    scene.traverse((object) => {
-      if (object.userData.isFurniture || object.userData.furnitureType) {
-        furnitureCount++;
+    
+    let currentFurnitureCount = 0;
+    const countFurniture = (obj) => {
+      if (obj.userData && (obj.userData.isFurniture === true || obj.userData.furnitureType)) {
+        currentFurnitureCount++;
       }
-    });
-    if (lastFurnitureCountRef.current !== furnitureCount) {
-      lastFurnitureCountRef.current = furnitureCount;
+      if (obj.children) {
+        obj.children.forEach(child => countFurniture(child));
+      }
+    };
+    countFurniture(scene);
+    
+    if (lastFurnitureCountRef.current !== currentFurnitureCount) {
+      console.log(`🪑 Furniture changed! Old count: ${lastFurnitureCountRef.current}, New count: ${currentFurnitureCount}`);
+      lastFurnitureCountRef.current = currentFurnitureCount;
       return true;
     }
     return false;
@@ -270,22 +313,24 @@ const EscapePathVisualizer = forwardRef(({
   // Set up interval to monitor furniture changes
   useEffect(() => {
     if (!isActive || !pathfindingServiceRef.current || !scene) return;
+    
     if (furnitureCheckIntervalRef.current) {
       clearInterval(furnitureCheckIntervalRef.current);
     }
+    
     furnitureCheckIntervalRef.current = setInterval(() => {
       if (checkFurnitureChanges()) {
-        pathfindingServiceRef.current.initializeFromScene(scene);
-        setFurnitureVersion(prev => prev + 1);
+        refreshPathfinding();
       }
     }, 500);
+    
     return () => {
       if (furnitureCheckIntervalRef.current) {
         clearInterval(furnitureCheckIntervalRef.current);
         furnitureCheckIntervalRef.current = null;
       }
     };
-  }, [isActive, scene, checkFurnitureChanges]);
+  }, [isActive, scene, checkFurnitureChanges, refreshPathfinding]);
 
   // When isActive becomes false, clear everything
   useEffect(() => {
@@ -327,29 +372,14 @@ const EscapePathVisualizer = forwardRef(({
       return;
     }
     calculateEscapePath(startPoint);
-  }, [isActive, currentPosition, scene, furnitureVersion, selectedStartPoint]);
+  }, [isActive, currentPosition, scene, selectedStartPoint]);
 
   const calculateEscapePath = async (position) => {
     setIsCalculating(true);
     setError(null);
     try {
-      // Use regular pathfinding (base service)
       const escapePath = pathfindingServiceRef.current.findEscapePath(position);
       if (escapePath && escapePath.length > 0) {
-        const goesThroughWall = checkPathForWalls(escapePath);
-        if (goesThroughWall) {
-          setError("Path would go through wall - this shouldn't happen");
-          setPath(null);
-          showPopup("❌ Path blocked by walls!");
-          return;
-        }
-        const goesThroughFurniture = checkPathForFurniture(escapePath, scene);
-        if (goesThroughFurniture) {
-          showPopup("❌ No safe path around furniture!");
-          setError("No safe path around furniture");
-          setPath(null);
-          return;
-        }
         setPath(escapePath);
         clearPathVisualization();
         visualizePath(escapePath);
@@ -368,44 +398,6 @@ const EscapePathVisualizer = forwardRef(({
     } finally {
       setIsCalculating(false);
     }
-  };
-
-  // Helper function to check if path goes through walls
-  const checkPathForWalls = (path) => {
-    if (!path || path.length === 0 || !pathfindingServiceRef.current) return false;
-    for (let i = 0; i < path.length; i++) {
-      const point = path[i];
-      const gridPos = pathfindingServiceRef.current.worldToGrid(point);
-      if (gridPos) {
-        const grid = pathfindingServiceRef.current.grid;
-        if (grid[gridPos.x][gridPos.z].type === 'wall') {
-          return true;
-        }
-      }
-    }
-    return false;
-  };
-
-  // Helper function to check if path goes through furniture
-  const checkPathForFurniture = (path, scene) => {
-    if (!path || path.length === 0 || !scene) return false;
-    for (let i = 0; i < path.length; i++) {
-      const point = path[i];
-      let insideFurniture = false;
-      scene.traverse((object) => {
-        if (object.userData.isFurniture || object.userData.furnitureType) {
-          const distance = Math.sqrt(
-            Math.pow(point.x - object.position.x, 2) + 
-            Math.pow(point.z - object.position.z, 2)
-          );
-          if (distance < 1.0) {
-            insideFurniture = true;
-          }
-        }
-      });
-      if (insideFurniture) return true;
-    }
-    return false;
   };
 
   const visualizePath = (path) => {

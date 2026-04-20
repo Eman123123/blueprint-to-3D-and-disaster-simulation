@@ -1922,12 +1922,19 @@ useEffect(() => {
 
         // Handle window resize
         const handleResize = () => {
-          if (!container || !camera || !renderer) return;
-          camera.aspect = container.clientWidth / container.clientHeight;
-          camera.updateProjectionMatrix();
-          renderer.setSize(container.clientWidth, container.clientHeight);
-        };
-        window.addEventListener("resize", handleResize);
+  if (!container || !camera || !renderer) return;
+  // Force get actual dimensions
+  const width = container.clientWidth;
+  const height = container.clientHeight;
+  camera.aspect = width / height;
+  camera.updateProjectionMatrix();
+  renderer.setSize(width, height);  // ADD pixel ratio for sharpness
+  renderer.setPixelRatio(window.devicePixelRatio);
+};
+
+// ADD THIS: trigger resize immediately after init
+setTimeout(() => handleResize(), 100);
+window.addEventListener("resize", handleResize);
 
         setIsViewerInitialized(true);
         animate();
@@ -2168,13 +2175,24 @@ useEffect(() => {
 
   // Utility Controls
   const resetCamera = () => {
-    const controls = cameraControlsRef.current;
-    controls.distance = 60;
-    controls.phi = Math.PI / 3;
-    controls.theta = Math.PI / 3;
+  const controls = cameraControlsRef.current;
+  
+  if (currentModelRef.current) {
+    const box = new THREE.Box3().setFromObject(currentModelRef.current);
+    const center = box.getCenter(new THREE.Vector3());
+    controls.target.set(center.x, center.y, center.z);
+    
+    const size = box.getSize(new THREE.Vector3());
+    const maxDim = Math.max(size.x, size.y, size.z);
+    controls.distance = maxDim * 1.2;  // CHANGE from 2.5 → 1.2 (closer zoom)
+  } else {
     controls.target.set(0, 0, 0);
-  };
-
+    controls.distance = 25;  
+  }
+  
+  controls.phi = Math.PI / 3;
+  controls.theta = Math.PI / 4;
+};
   const toggleWireframe = () => {
     if (currentModelRef.current) {
       currentModelRef.current.traverse((child) => {
@@ -2510,10 +2528,10 @@ useEffect(() => {
               </div>
             )}
 
-            {/* 3D Viewer Container */}
             <div 
-              ref={viewerRef} 
-              className={`viewer-3d-container ${furniturePlacementModeRef.current.active ? 'furniture-mode' : ''}`}
+            ref={viewerRef} 
+            className={`viewer-3d-container ${furniturePlacementModeRef.current.active ? 'furniture-mode' : ''}`}
+            style={{ height: '80vh', minHeight: '600px', width: '100%', marginBottom: '20px', display: 'block' }}
             />
             
             {/* Escape Path Visualizer - Now with ref */}
